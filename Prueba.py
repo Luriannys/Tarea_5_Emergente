@@ -1,636 +1,568 @@
-import os
+﻿import json
 import math
 import re
-from typing import List, Tuple, Optional, Dict, Set
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
-# Constantes
-ANCHO = 88  # Columnas (A a AA, AB, AC)
-ALTO = 16   # Filas (1 a 16)
-ANCHO_CELDA = 3  # Cada celda ocupa 3 caracteres
 
-# Tipos de zonas
-RESIDENCIAL = 'r'
-COMERCIAL = 'c'
-INDUSTRIAL = 'i'
-VACIO = '.'
+# La figura del enunciado muestra columnas A..AC: 29 celdas.
+# Cada celda ocupa 3 caracteres, por lo que el area util es 29 * 3 = 87
+# caracteres, que corresponde al ancho aproximado de consola solicitado.
+COLUMNAS = 29
+FILAS = 16
+ANCHO_CELDA = 3
+NIVEL_MAXIMO = 27
+DISTANCIA_ZONAS = 10
 
-# Símbolos para arterias
-HORIZONTAL = '='
-VERTICAL = '|'
-INTERSECCION = ':'
+RESIDENCIAL = "r"
+COMERCIAL = "c"
+INDUSTRIAL = "i"
+TIPOS_ZONA = {RESIDENCIAL, COMERCIAL, INDUSTRIAL}
+
+
+@dataclass
+class Zona:
+    fila: int
+    col: int
+    tipo: str
+    nivel: int = 1
+    decrecio: bool = False
+
 
 class Celda:
-    """Representa una celda individual en la cuadrícula"""
-    def __init__(self, contenido='.', nivel=0, es_zona=False, es_arteria=False):
-        self.contenido = contenido  # Carácter mostrado
-        self.nivel = nivel          # Nivel de crecimiento (0-27)
-        self.es_zona = es_zona      # True si es una zona
-        self.es_arteria = es_arteria # True si es arteria vial
-        self.tipo_zona = None       # 'r', 'c', 'i' si es zona
-        self.trafico = 0            # Nivel de tráfico (para arterias)
-        self.trafico_anterior = 0   # Tráfico del tick anterior
-        self.decrecio = False       # Si decreció en el tick anterior
-        
-    def __str__(self):
-        if self.es_arteria:
-            if self.trafico > 1 and self.contenido != INTERSECCION:
-                return str(self.trafico)
-            return self.contenido
-        return self.contenido
+    """Representa una celda logica de la ciudad.
+
+    Una celda se imprime siempre con 3 caracteres para respetar el formato del
+    enunciado. Puede estar vacia, contener parte de una zona, una arteria vial
+    horizontal/vertical, o una interseccion.
+    """
+
+    def __init__(self):
+        self.texto_zona = "   "
+        self.es_zona = False
+        self.tipo_zona: Optional[str] = None
+        self.nivel_zona = 0
+        self.arteria_horizontal = False
+        self.arteria_vertical = False
+        self.trafico = 0
+        self.trafico_anterior = 0
+
+    @property
+    def es_arteria(self) -> bool:
+        return self.arteria_horizontal or self.arteria_vertical
+
+    @property
+    def ocupada(self) -> bool:
+        return self.es_zona or self.es_arteria
+
+    def render(self) -> str:
+        if self.arteria_horizontal and self.arteria_vertical:
+            return ":+:"
+        if self.arteria_horizontal:
+            return "==="
+        if self.arteria_vertical:
+            return "| |"
+        if self.es_zona:
+            return self.texto_zona
+        return "   "
+
 
 class SimCity:
     def __init__(self):
-        self.grid = [[Celda() for _ in range(ANCHO)] for _ in range(ALTO)]
-        self.zonas = []  # Lista de zonas [(fila, col, tipo, nivel)]
-        self.arterias = []  # Lista de arterias [(fila1, col1, fila2, col2, tipo)]
+        self.grid: List[List[Celda]] = []
+        self.zonas: List[Zona] = []
         self.tick_actual = 0
         self.inicializar_grid()
-        
+
     def inicializar_grid(self):
-        """Inicializa la cuadrícula vacía con puntos"""
-        for fila in range(ALTO):
-            for col in range(ANCHO):
-                self.grid[fila][col] = Celda('.')
+        """Reinicia la ciudad a una cuadricula vacia."""
+        self.grid = [[Celda() for _ in range(COLUMNAS)] for _ in range(FILAS)]
         self.zonas = []
-        self.arterias = []
-        
+        self.tick_actual = 0
+
     def coordenada_a_indices(self, coord: str) -> Tuple[int, int]:
-        """Convierte coordenada como 'C4' a (fila, columna)"""
-        # Separar letras y números
-        match = re.match(r'([A-Z]+)(\d+)', coord.upper())
+        """Convierte una coordenada estilo Excel, como C4 o AC16, a indices."""
+        match = re.fullmatch(r"([A-Z]+)(\d+)", coord.strip().upper())
         if not match:
-            raise ValueError(f"Coordenada inválida: {coord}")
-        
+            raise ValueError(f"Coordenada invalida: {coord}")
+
         letras, numero = match.groups()
         col = 0
         for char in letras:
-            col = col * 26 + (ord(char) - ord('A') + 1)
-        col -= 1  # Convertir a 0-based
-        
-        fila = int(numero) - 1  # Convertir a 0-based
-        
-        if fila < 0 or fila >= ALTO or col < 0 or col >= ANCHO:
+            col = col * 26 + (ord(char) - ord("A") + 1)
+        col -= 1
+
+        fila = int(numero) - 1
+        if fila < 0 or fila >= FILAS or col < 0 or col >= COLUMNAS:
             raise ValueError(f"Coordenada fuera de rango: {coord}")
-        
+
         return fila, col
-    
+
     def indices_a_coordenada(self, fila: int, col: int) -> str:
-        """Convierte (fila, columna) a coordenada como 'C4'"""
-        if col < 0 or col >= ANCHO or fila < 0 or fila >= ALTO:
-            raise ValueError(f"Índices fuera de rango: ({fila}, {col})")
-        
-        # Convertir columna a letras (Excel style)
+        """Convierte indices internos a coordenadas estilo Excel."""
+        if fila < 0 or fila >= FILAS or col < 0 or col >= COLUMNAS:
+            raise ValueError(f"Indices fuera de rango: ({fila}, {col})")
+
         letras = ""
-        num = col + 1
-        while num > 0:
-            num -= 1
-            letras = chr(ord('A') + (num % 26)) + letras
-            num //= 26
-        
+        numero_columna = col + 1
+        while numero_columna > 0:
+            numero_columna -= 1
+            letras = chr(ord("A") + numero_columna % 26) + letras
+            numero_columna //= 26
+
         return f"{letras}{fila + 1}"
-    
+
+    def render_zona(self, tipo: str, nivel: int, indice_celda: int) -> str:
+        """Devuelve los 3 caracteres de una celda de zona segun su nivel.
+
+        Una zona tiene 3x3 celdas y cada celda ocupa 3 caracteres: 27 letras.
+        El nivel indica cuantas de esas letras pasan a mayuscula.
+        """
+        inicio = indice_celda * ANCHO_CELDA
+        caracteres = []
+        for offset in range(ANCHO_CELDA):
+            posicion = inicio + offset + 1
+            caracteres.append(tipo.upper() if posicion <= nivel else tipo)
+        return "".join(caracteres)
+
+    def actualizar_zona_en_grid(self, zona: Zona):
+        """Refresca la representacion visual de una zona existente."""
+        for df in range(3):
+            for dc in range(3):
+                indice_celda = df * 3 + dc
+                celda = self.grid[zona.fila + df][zona.col + dc]
+                celda.es_zona = True
+                celda.tipo_zona = zona.tipo
+                celda.nivel_zona = zona.nivel
+                celda.texto_zona = self.render_zona(zona.tipo, zona.nivel, indice_celda)
+
     def colocar_zona(self, coord: str, tipo: str) -> bool:
-        """Coloca una zona de 3x3 en la coordenada dada"""
+        """Coloca una zona 3x3 en la esquina superior izquierda indicada."""
+        tipo = tipo.lower()
+        if tipo not in TIPOS_ZONA:
+            print(f"Error: tipo de zona invalido: {tipo}")
+            return False
+
         try:
             fila, col = self.coordenada_a_indices(coord)
-        except ValueError as e:
-            print(f"Error: {e}")
+        except ValueError as error:
+            print(f"Error: {error}")
             return False
-        
-        # Verificar que la zona cabe en la cuadrícula
-        if fila + 2 >= ALTO or col + 2 >= ANCHO:
-            print(f"Error: La zona no cabe en la posición {coord}")
+
+        if fila + 2 >= FILAS or col + 2 >= COLUMNAS:
+            print(f"Error: La zona no cabe desde {coord}")
             return False
-        
-        # Verificar que todas las celdas estén vacías
-        for df in range(3):
-            for dc in range(3):
-                if self.grid[fila + df][col + dc].contenido != '.':
-                    print(f"Error: La celda {self.indices_a_coordenada(fila + df, col + dc)} está ocupada")
-                    return False
-        
-        # Colocar la zona
-        for df in range(3):
-            for dc in range(3):
-                celda = Celda(tipo, 1, True, False)
-                celda.tipo_zona = tipo
-                self.grid[fila + df][col + dc] = celda
-        
-        # Registrar la zona
-        self.zonas.append((fila, col, tipo, 1))
-        return True
-    
-    def colocar_arteria(self, inicio: str, fin: str) -> bool:
-        """Coloca una arteria vial entre dos coordenadas"""
-        try:
-            fila1, col1 = self.coordenada_a_indices(inicio)
-            fila2, col2 = self.coordenada_a_indices(fin)
-        except ValueError as e:
-            print(f"Error: {e}")
-            return False
-        
-        # Determinar si es horizontal o vertical
-        if fila1 == fila2:  # Horizontal
-            if col1 > col2:
-                col1, col2 = col2, col1
-            # Verificar que todas las celdas estén vacías
-            for c in range(col1, col2 + 1):
-                if self.grid[fila1][c].contenido != '.':
-                    print(f"Error: La celda {self.indices_a_coordenada(fila1, c)} está ocupada")
-                    return False
-            # Colocar arteria horizontal
-            for c in range(col1, col2 + 1):
-                celda = Celda(HORIZONTAL, 0, False, True)
-                self.grid[fila1][c] = celda
-            self.arterias.append((fila1, col1, fila1, col2, 'H'))
-            
-        elif col1 == col2:  # Vertical
-            if fila1 > fila2:
-                fila1, fila2 = fila2, fila1
-            # Verificar que todas las celdas estén vacías
-            for f in range(fila1, fila2 + 1):
-                if self.grid[f][col1].contenido != '.':
-                    print(f"Error: La celda {self.indices_a_coordenada(f, col1)} está ocupada")
-                    return False
-            # Colocar arteria vertical
-            for f in range(fila1, fila2 + 1):
-                celda = Celda(VERTICAL, 0, False, True)
-                self.grid[f][col1] = celda
-            self.arterias.append((fila1, col1, fila2, col1, 'V'))
-            
-        else:
-            print("Error: Las arterias deben ser horizontales o verticales")
-            return False
-        
-        # Actualizar intersecciones
-        self.actualizar_intersecciones()
-        return True
-    
-    def actualizar_intersecciones(self):
-        """Actualiza las intersecciones donde se cruzan arterias"""
-        # Primero, marcar todas las arterias como normales
-        for fila in range(ALTO):
-            for col in range(ANCHO):
-                if self.grid[fila][col].es_arteria and self.grid[fila][col].contenido != INTERSECCION:
-                    if self.grid[fila][col].contenido == '=':
-                        self.grid[fila][col].contenido = HORIZONTAL
-                    elif self.grid[fila][col].contenido == '|':
-                        self.grid[fila][col].contenido = VERTICAL
-        
-        # Luego, encontrar y marcar intersecciones
-        for fila in range(ALTO):
-            for col in range(ANCHO):
-                if self.grid[fila][col].es_arteria:
-                    # Verificar si hay intersección (horizontal + vertical)
-                    es_horizontal = self.grid[fila][col].contenido == HORIZONTAL
-                    es_vertical = self.grid[fila][col].contenido == VERTICAL
-                    
-                    # Verificar si es parte de una intersección
-                    if fila > 0 and fila < ALTO-1 and col > 0 and col < ANCHO-1:
-                        # Buscar intersecciones
-                        hay_horizontal = (self.grid[fila][col-1].contenido == HORIZONTAL or 
-                                        self.grid[fila][col+1].contenido == HORIZONTAL)
-                        hay_vertical = (self.grid[fila-1][col].contenido == VERTICAL or 
-                                      self.grid[fila+1][col].contenido == VERTICAL)
-                        
-                        # Si es horizontal y hay vertical, es intersección
-                        if (self.grid[fila][col].contenido == HORIZONTAL or 
-                            self.grid[fila][col].contenido == VERTICAL):
-                            if hay_horizontal and hay_vertical:
-                                self.grid[fila][col].contenido = INTERSECCION
-    
-    def guardar(self, ruta: str):
-        """Guarda la cuadrícula en un archivo"""
-        try:
-            with open(ruta, 'w') as f:
-                # Guardar dimensiones
-                f.write(f"{ANCHO} {ALTO}\n")
-                
-                # Guardar todas las celdas
-                for fila in range(ALTO):
-                    for col in range(ANCHO):
-                        celda = self.grid[fila][col]
-                        if celda.es_zona:
-                            f.write(f"Z {fila} {col} {celda.tipo_zona} {celda.nivel}\n")
-                        elif celda.es_arteria:
-                            f.write(f"A {fila} {col} {celda.contenido} {celda.trafico}\n")
-                
-                # Guardar zonas como grupos
-                f.write("ZONAS\n")
-                for fila, col, tipo, nivel in self.zonas:
-                    f.write(f"{fila} {col} {tipo} {nivel}\n")
-                
-                # Guardar arterias
-                f.write("ARTERIAS\n")
-                for f1, c1, f2, c2, tipo in self.arterias:
-                    f.write(f"{f1} {c1} {f2} {c2} {tipo}\n")
-                
-            print(f"Ciudad guardada en {ruta}")
-        except Exception as e:
-            print(f"Error al guardar: {e}")
-    
-    def cargar(self, ruta: str):
-        """Carga una cuadrícula desde un archivo"""
-        try:
-            with open(ruta, 'r') as f:
-                # Reiniciar grid
-                self.inicializar_grid()
-                
-                lines = f.readlines()
-                i = 0
-                while i < len(lines):
-                    line = lines[i].strip()
-                    if not line:
-                        i += 1
-                        continue
-                    
-                    parts = line.split()
-                    if parts[0] == "ZONAS":
-                        i += 1
-                        while i < len(lines) and lines[i].strip():
-                            partes = lines[i].strip().split()
-                            if partes:
-                                fila, col, tipo, nivel = int(partes[0]), int(partes[1]), partes[2], int(partes[3])
-                                # Colocar la zona
-                                for df in range(3):
-                                    for dc in range(3):
-                                        celda = Celda(tipo, nivel, True, False)
-                                        celda.tipo_zona = tipo
-                                        self.grid[fila + df][col + dc] = celda
-                                self.zonas.append((fila, col, tipo, nivel))
-                            i += 1
-                        continue
-                    
-                    elif parts[0] == "ARTERIAS":
-                        i += 1
-                        while i < len(lines) and lines[i].strip():
-                            partes = lines[i].strip().split()
-                            if partes:
-                                f1, c1, f2, c2, tipo = int(partes[0]), int(partes[1]), int(partes[2]), int(partes[3]), partes[4]
-                                # Colocar arteria
-                                if tipo == 'H':
-                                    for c in range(min(c1, c2), max(c1, c2) + 1):
-                                        celda = Celda(HORIZONTAL, 0, False, True)
-                                        self.grid[f1][c] = celda
-                                else:  # 'V'
-                                    for f in range(min(f1, f2), max(f1, f2) + 1):
-                                        celda = Celda(VERTICAL, 0, False, True)
-                                        self.grid[f][c1] = celda
-                                self.arterias.append((f1, c1, f2, c2, tipo))
-                            i += 1
-                        self.actualizar_intersecciones()
-                        continue
-                    
-                    # Formato simple: Z f c tipo nivel
-                    elif parts[0] == "Z":
-                        fila, col, tipo, nivel = int(parts[1]), int(parts[2]), parts[3], int(parts[4])
-                        for df in range(3):
-                            for dc in range(3):
-                                celda = Celda(tipo, nivel, True, False)
-                                celda.tipo_zona = tipo
-                                self.grid[fila + df][col + dc] = celda
-                        self.zonas.append((fila, col, tipo, nivel))
-                    
-                    # Formato simple: A f c simbolo trafico
-                    elif parts[0] == "A":
-                        fila, col, simbolo, trafico = int(parts[1]), int(parts[2]), parts[3], int(parts[4])
-                        celda = Celda(simbolo, 0, False, True)
-                        celda.trafico = trafico
-                        self.grid[fila][col] = celda
-                    
-                    i += 1
-                
-            print(f"Ciudad cargada desde {ruta}")
-        except Exception as e:
-            print(f"Error al cargar: {e}")
-            self.inicializar_grid()
-    
-    def imprimir_grid(self):
-        """Imprime la cuadrícula en consola"""
-        # Imprimir encabezado de columnas
-        print("   ", end="")
-        for col in range(ANCHO):
-            coord = self.indices_a_coordenada(0, col)
-            print(f"{coord:3}", end="")
-        print()
-        
-        # Imprimir filas
-        for fila in range(ALTO):
-            print(f"{fila + 1:2} ", end="")
-            for col in range(ANCHO):
-                if col < ANCHO - 1:
-                    print(f"{self.grid[fila][col]}", end="")
-                else:
-                    print(f"{self.grid[fila][col]}")
-    
-    def tick(self):
-        """Ejecuta un tick de reloj"""
-        self.tick_actual += 1
-        print(f"\n=== TICK {self.tick_actual} ===")
-        
-        # 1. Calcular tráfico de arterias
-        self.calcular_trafico()
-        
-        # 2. Evaluar crecimiento/decrecimiento de zonas
-        self.evaluar_zonas()
-        
-        # 3. Actualizar tráfico anterior
-        for fila in range(ALTO):
-            for col in range(ANCHO):
-                if self.grid[fila][col].es_arteria:
-                    self.grid[fila][col].trafico_anterior = self.grid[fila][col].trafico
-        
-        # 4. Imprimir nuevo estado
-        self.imprimir_grid()
-    
-    def calcular_trafico(self):
-        """Calcula el tráfico para todas las arterias"""
-        # Reiniciar tráfico
-        for fila in range(ALTO):
-            for col in range(ANCHO):
-                if self.grid[fila][col].es_arteria:
-                    self.grid[fila][col].trafico = 0
-        
-        # Para cada arteria, calcular tráfico basado en zonas adyacentes
-        for fila in range(ALTO):
-            for col in range(ANCHO):
-                if self.grid[fila][col].es_arteria:
-                    trafico = 0
-                    # Verificar 4 direcciones
-                    direcciones = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-                    for df, dc in direcciones:
-                        nf, nc = fila + df, col + dc
-                        if 0 <= nf < ALTO and 0 <= nc < ANCHO:
-                            if self.grid[nf][nc].es_zona:
-                                trafico += int(math.sqrt(self.grid[nf][nc].nivel))
-                    self.grid[fila][col].trafico = trafico
-    
-    def evaluar_zonas(self):
-        """Evalúa crecimiento/decrecimiento de todas las zonas"""
-        nuevas_zonas = []
-        
-        for fila, col, tipo, nivel in self.zonas:
-            # Verificar si la zona sigue existiendo
-            if not self.zona_existe(fila, col, tipo):
-                continue
-            
-            votos_crecimiento = 0
-            votos_decrecimiento = 0
-            
-            if tipo == RESIDENCIAL:
-                votos_crecimiento, votos_decrecimiento = self.evaluar_zona_residencial(fila, col, nivel)
-            elif tipo == COMERCIAL:
-                votos_crecimiento, votos_decrecimiento = self.evaluar_zona_comercial(fila, col, nivel)
-            elif tipo == INDUSTRIAL:
-                votos_crecimiento, votos_decrecimiento = self.evaluar_zona_industrial(fila, col, nivel)
-            
-            # Decidir cambio
-            if votos_crecimiento > votos_decrecimiento and nivel < 27:
-                nuevo_nivel = nivel + 1
-                self.actualizar_zona(fila, col, tipo, nuevo_nivel)
-                nuevas_zonas.append((fila, col, tipo, nuevo_nivel))
-            elif votos_decrecimiento > votos_crecimiento and nivel > 1:
-                nuevo_nivel = nivel - 1
-                self.actualizar_zona(fila, col, tipo, nuevo_nivel)
-                nuevas_zonas.append((fila, col, tipo, nuevo_nivel))
-            else:
-                nuevas_zonas.append((fila, col, tipo, nivel))
-        
-        self.zonas = nuevas_zonas
-    
-    def zona_existe(self, fila: int, col: int, tipo: str) -> bool:
-        """Verifica si una zona aún existe en la cuadrícula"""
-        if fila + 2 >= ALTO or col + 2 >= ANCHO:
-            return False
-        for df in range(3):
-            for dc in range(3):
-                if not self.grid[fila + df][col + dc].es_zona or self.grid[fila + df][col + dc].tipo_zona != tipo:
-                    return False
-        return True
-    
-    def actualizar_zona(self, fila: int, col: int, tipo: str, nuevo_nivel: int):
-        """Actualiza el nivel de una zona"""
+
         for df in range(3):
             for dc in range(3):
                 celda = self.grid[fila + df][col + dc]
-                celda.nivel = nuevo_nivel
-                # Actualizar representación visual (mayúsculas según nivel)
-                if nuevo_nivel <= 26:
-                    if nuevo_nivel >= 1:
-                        celda.contenido = tipo.upper() if nuevo_nivel > 1 else tipo
-                    else:
-                        celda.contenido = tipo
-                else:
-                    # Nivel 27 se muestra con mayúscula
-                    celda.contenido = tipo.upper()
-    
-    def evaluar_zona_residencial(self, fila: int, col: int, nivel: int) -> Tuple[int, int]:
-        """Evalúa crecimiento para zona residencial"""
-        votos_crecimiento = 0
-        votos_decrecimiento = 0
-        
-        # Zona central de la zona residencial
-        cf, cc = fila + 1, col + 1
-        
-        # Crecimiento: arterias adyacentes
-        direcciones = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-        for df, dc in direcciones:
-            nf, nc = cf + df, cc + dc
-            if 0 <= nf < ALTO and 0 <= nc < ANCHO:
-                if self.grid[nf][nc].es_arteria:
-                    votos_crecimiento += 1
-                    if self.grid[nf][nc].trafico > 5:
-                        votos_decrecimiento += 2
-        
-        # Crecimiento: zonas industriales a 10 celdas de distancia con nivel < 18
-        for z_fila, z_col, z_tipo, z_nivel in self.zonas:
-            if z_tipo == INDUSTRIAL:
-                # Calcular distancia entre centros de zonas
-                dist = max(abs(z_fila + 1 - cf), abs(z_col + 1 - cc))
-                if dist <= 10 and z_nivel < 18:
-                    votos_crecimiento += 1
-                elif dist > 10:
-                    votos_decrecimiento += 2
-            elif z_tipo == COMERCIAL:
-                dist = max(abs(z_fila + 1 - cf), abs(z_col + 1 - cc))
-                if dist <= 10 and z_nivel > math.sqrt(nivel):
-                    votos_crecimiento += 1
-        
-        return votos_crecimiento, votos_decrecimiento
-    
-    def evaluar_zona_comercial(self, fila: int, col: int, nivel: int) -> Tuple[int, int]:
-        """Evalúa crecimiento para zona comercial"""
-        votos_crecimiento = 0
-        votos_decrecimiento = 0
-        
-        # Zona central de la zona comercial
-        cf, cc = fila + 1, col + 1
-        
-        # Crecimiento: arterias con tráfico > 5
-        direcciones = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-        for df, dc in direcciones:
-            nf, nc = cf + df, cc + dc
-            if 0 <= nf < ALTO and 0 <= nc < ANCHO:
-                if self.grid[nf][nc].es_arteria:
-                    if self.grid[nf][nc].trafico > 5:
-                        votos_crecimiento += 1
-                    # Decremento: arterias con tráfico decrecido
-                    if self.grid[nf][nc].trafico < self.grid[nf][nc].trafico_anterior:
-                        votos_decrecimiento += 2
-        
-        # Evaluar zonas cercanas
-        for z_fila, z_col, z_tipo, z_nivel in self.zonas:
-            dist = max(abs(z_fila + 1 - cf), abs(z_col + 1 - cc))
-            if dist <= 10:
-                if z_tipo == RESIDENCIAL:
-                    votos_crecimiento += 1
-                    if z_nivel < self.grid[z_fila + 1][z_col + 1].nivel:  # Decrementó
-                        votos_decrecimiento += 2
-                elif z_tipo == INDUSTRIAL:
-                    if z_nivel > math.sqrt(nivel):
-                        votos_crecimiento += 1
-                    if z_nivel < self.grid[z_fila + 1][z_col + 1].nivel:  # Decrementó
-                        votos_decrecimiento += 2
-        
-        return votos_crecimiento, votos_decrecimiento
-    
-    def evaluar_zona_industrial(self, fila: int, col: int, nivel: int) -> Tuple[int, int]:
-        """Evalúa crecimiento para zona industrial"""
-        votos_crecimiento = 0
-        votos_decrecimiento = 0
-        
-        # Zona central de la zona industrial
-        cf, cc = fila + 1, col + 1
-        
-        # Crecimiento: arterias adyacentes
-        direcciones = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-        for df, dc in direcciones:
-            nf, nc = cf + df, cc + dc
-            if 0 <= nf < ALTO and 0 <= nc < ANCHO:
-                if self.grid[nf][nc].es_arteria:
-                    votos_crecimiento += 1
-        
-        # Evaluar zonas cercanas
-        for z_fila, z_col, z_tipo, z_nivel in self.zonas:
-            dist = max(abs(z_fila + 1 - cf), abs(z_col + 1 - cc))
-            if dist <= 10:
-                if z_tipo == RESIDENCIAL:
-                    votos_crecimiento += 1
-                    if z_nivel < self.grid[z_fila + 1][z_col + 1].nivel:  # Decrementó
-                        votos_decrecimiento += 2
-                elif z_tipo == COMERCIAL:
-                    if z_nivel > math.sqrt(nivel):
-                        votos_crecimiento += 1
-                    if z_nivel < self.grid[z_fila + 1][z_col + 1].nivel:  # Decrementó
-                        votos_decrecimiento += 2
-                elif z_tipo == INDUSTRIAL:
-                    if z_nivel < self.grid[z_fila + 1][z_col + 1].nivel:  # Decrementó
-                        votos_decrecimiento += 2
-        
-        return votos_crecimiento, votos_decrecimiento
-    
-    def es_comando_valido(self, comando: str) -> bool:
-        """Verifica si un comando es válido antes de procesarlo"""
-        if not comando.strip():
-            return True  # Enter vacío = tick
-        
-        partes = comando.strip().split()
-        if not partes:
-            return True
-        
-        cmd = partes[0].lower()
-        
-        if cmd in ['r', 'c', 'i']:
-            return len(partes) == 2
-        elif cmd == 'a':
-            return len(partes) >= 3
-        elif cmd in ['guardar', 'cargar', 'salir']:
-            return len(partes) >= 1
-        return False
-    
-    def procesar_comando(self, comando: str):
-        """Procesa un comando del usuario"""
-        if not comando.strip():
-            # Enter vacío = tick
-            self.tick()
-            return
-        
-        partes = comando.strip().split()
-        cmd = partes[0].lower()
-        
-        if cmd == 'salir':
-            return 'salir'
-        
-        elif cmd == 'guardar':
-            if len(partes) >= 2:
-                self.guardar(partes[1])
-            else:
-                print("Uso: guardar <ruta_archivo>")
-        
-        elif cmd == 'cargar':
-            if len(partes) >= 2:
-                self.cargar(partes[1])
-            else:
-                print("Uso: cargar <ruta_archivo>")
-        
-        elif cmd in ['r', 'c', 'i']:
-            if len(partes) >= 2:
-                self.colocar_zona(partes[1], cmd)
-            else:
-                print(f"Uso: {cmd} <celda>")
-        
-        elif cmd == 'a':
-            if len(partes) >= 3:
-                self.colocar_arteria(partes[1], partes[2])
-            else:
-                print("Uso: a <celda_inicio> <celda_fin>")
-        
+                if celda.ocupada:
+                    ocupada = self.indices_a_coordenada(fila + df, col + dc)
+                    print(f"Error: La celda {ocupada} ya esta ocupada")
+                    return False
+
+        zona = Zona(fila=fila, col=col, tipo=tipo, nivel=1)
+        self.zonas.append(zona)
+        self.actualizar_zona_en_grid(zona)
+        return True
+
+    def colocar_arteria(self, inicio: str, fin: str) -> bool:
+        """Coloca una arteria horizontal o vertical.
+
+        Soporta los dos estilos del enunciado:
+        - a C7 P   (misma fila, termina en columna P)
+        - a F4 9   (misma columna, termina en fila 9)
+        Tambien acepta el estilo completo:
+        - a C7 P7
+        - a F4 F9
+        """
+        try:
+            fila1, col1 = self.coordenada_a_indices(inicio)
+            fila2, col2 = self.fin_arteria_a_indices(fila1, col1, fin)
+        except ValueError as error:
+            print(f"Error: {error}")
+            return False
+
+        if fila1 != fila2 and col1 != col2:
+            print("Error: Las arterias deben ser horizontales o verticales")
+            return False
+
+        horizontal = fila1 == fila2
+        if horizontal:
+            paso = [(fila1, col) for col in range(min(col1, col2), max(col1, col2) + 1)]
         else:
-            print(f"Comando desconocido: {cmd}")
-        
-        # Imprimir grid después de cada comando
+            paso = [(fila, col1) for fila in range(min(fila1, fila2), max(fila1, fila2) + 1)]
+
+        # Las arterias pueden cruzar otras arterias, pero no pueden pisar zonas.
+        for fila, col in paso:
+            if self.grid[fila][col].es_zona:
+                ocupada = self.indices_a_coordenada(fila, col)
+                print(f"Error: La celda {ocupada} contiene una zona")
+                return False
+
+        for fila, col in paso:
+            if horizontal:
+                self.grid[fila][col].arteria_horizontal = True
+            else:
+                self.grid[fila][col].arteria_vertical = True
+
+        return True
+
+    def fin_arteria_a_indices(self, fila_inicio: int, col_inicio: int, fin: str) -> Tuple[int, int]:
+        """Interpreta el segundo argumento del comando de arteria."""
+        fin = fin.strip().upper()
+
+        if re.fullmatch(r"[A-Z]+", fin):
+            return fila_inicio, self.columna_a_indice(fin)
+        if re.fullmatch(r"\d+", fin):
+            fila = int(fin) - 1
+            if fila < 0 or fila >= FILAS:
+                raise ValueError(f"Fila fuera de rango: {fin}")
+            return fila, col_inicio
+        return self.coordenada_a_indices(fin)
+
+    def columna_a_indice(self, letras: str) -> int:
+        col = 0
+        for char in letras:
+            col = col * 26 + (ord(char) - ord("A") + 1)
+        col -= 1
+        if col < 0 or col >= COLUMNAS:
+            raise ValueError(f"Columna fuera de rango: {letras}")
+        return col
+
+    def guardar(self, ruta: str):
+        """Guarda la ciudad completa en JSON."""
+        datos = {
+            "filas": FILAS,
+            "columnas": COLUMNAS,
+            "tick_actual": self.tick_actual,
+            "zonas": [zona.__dict__ for zona in self.zonas],
+            "arterias": [
+                {
+                    "fila": fila,
+                    "col": col,
+                    "horizontal": celda.arteria_horizontal,
+                    "vertical": celda.arteria_vertical,
+                    "trafico": celda.trafico,
+                    "trafico_anterior": celda.trafico_anterior,
+                }
+                for fila in range(FILAS)
+                for col in range(COLUMNAS)
+                for celda in [self.grid[fila][col]]
+                if celda.es_arteria
+            ],
+        }
+
+        try:
+            with open(ruta, "w", encoding="utf-8") as archivo:
+                json.dump(datos, archivo, indent=2)
+            print(f"Ciudad guardada en {ruta}")
+        except OSError as error:
+            print(f"Error al guardar: {error}")
+
+    def cargar(self, ruta: str):
+        """Carga una ciudad guardada y reemplaza por completo la cuadricula."""
+        try:
+            with open(ruta, "r", encoding="utf-8") as archivo:
+                datos = json.load(archivo)
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"Error al cargar: {error}")
+            return
+
+        self.inicializar_grid()
+        self.tick_actual = int(datos.get("tick_actual", 0))
+
+        for zona_data in datos.get("zonas", []):
+            zona = Zona(
+                fila=int(zona_data["fila"]),
+                col=int(zona_data["col"]),
+                tipo=zona_data["tipo"],
+                nivel=int(zona_data.get("nivel", 1)),
+                decrecio=bool(zona_data.get("decrecio", False)),
+            )
+            self.zonas.append(zona)
+            self.actualizar_zona_en_grid(zona)
+
+        for arteria in datos.get("arterias", []):
+            fila = int(arteria["fila"])
+            col = int(arteria["col"])
+            if 0 <= fila < FILAS and 0 <= col < COLUMNAS and not self.grid[fila][col].es_zona:
+                celda = self.grid[fila][col]
+                celda.arteria_horizontal = bool(arteria.get("horizontal", False))
+                celda.arteria_vertical = bool(arteria.get("vertical", False))
+                celda.trafico = int(arteria.get("trafico", 0))
+                celda.trafico_anterior = int(arteria.get("trafico_anterior", 0))
+
+        print(f"Ciudad cargada desde {ruta}")
+
+    def imprimir_grid(self):
+        """Imprime la cuadricula completa."""
+        print("   ", end="")
+        for col in range(COLUMNAS):
+            etiqueta = self.indices_a_coordenada(0, col)[:-1]
+            print(f"{etiqueta:^{ANCHO_CELDA}}", end="")
+        print()
+
+        for fila in range(FILAS):
+            print(f"{fila + 1:2} ", end="")
+            for col in range(COLUMNAS):
+                print(self.grid[fila][col].render(), end="")
+            print()
+
+    def tick(self):
+        """Avanza un tick: recalcula trafico, zonas y muestra el nuevo estado."""
+        self.tick_actual += 1
+        print(f"\n=== TICK {self.tick_actual} ===")
+        self.calcular_trafico()
+        self.evaluar_zonas()
+        self.actualizar_trafico_anterior()
         self.imprimir_grid()
 
+    def calcular_trafico(self):
+        """Calcula el trafico de cada celda vial segun zonas adyacentes."""
+        for fila in range(FILAS):
+            for col in range(COLUMNAS):
+                celda = self.grid[fila][col]
+                if celda.es_arteria:
+                    trafico = 0
+                    for nf, nc in self.vecinos_ortogonales(fila, col):
+                        vecino = self.grid[nf][nc]
+                        if vecino.es_zona:
+                            trafico += max(1, int(math.sqrt(vecino.nivel_zona)))
+                    celda.trafico = trafico
+
+    def actualizar_trafico_anterior(self):
+        for fila in range(FILAS):
+            for col in range(COLUMNAS):
+                celda = self.grid[fila][col]
+                if celda.es_arteria:
+                    celda.trafico_anterior = celda.trafico
+
+    def evaluar_zonas(self):
+        """Evalua todas las zonas usando su estado antes de este tick."""
+        cambios = []
+        for zona in self.zonas:
+            crecimiento, decrecimiento = self.votos_zona(zona)
+            nuevo_nivel = zona.nivel
+            decrecio = False
+
+            if crecimiento > decrecimiento and zona.nivel < NIVEL_MAXIMO:
+                nuevo_nivel += 1
+            elif decrecimiento > crecimiento and zona.nivel > 1:
+                nuevo_nivel -= 1
+                decrecio = True
+
+            cambios.append((zona, nuevo_nivel, decrecio))
+
+        for zona, nuevo_nivel, decrecio in cambios:
+            zona.nivel = nuevo_nivel
+            zona.decrecio = decrecio
+            self.actualizar_zona_en_grid(zona)
+
+    def votos_zona(self, zona: Zona) -> Tuple[int, int]:
+        if zona.tipo == RESIDENCIAL:
+            return self.votos_residencial(zona)
+        if zona.tipo == COMERCIAL:
+            return self.votos_comercial(zona)
+        if zona.tipo == INDUSTRIAL:
+            return self.votos_industrial(zona)
+        return 0, 0
+
+    def votos_residencial(self, zona: Zona) -> Tuple[int, int]:
+        crecer = 0
+        decrecer = 0
+        arterias = self.arterias_adyacentes(zona)
+
+        crecer += len(arterias)
+        decrecer += 2 * sum(1 for fila, col in arterias if self.grid[fila][col].trafico > 5)
+
+        industriales_cercanas = 0
+        for otra in self.zonas_cercanas(zona):
+            if otra.tipo == INDUSTRIAL:
+                industriales_cercanas += 1
+                if otra.nivel < 18:
+                    crecer += 1
+            elif otra.tipo == COMERCIAL:
+                if otra.nivel > math.sqrt(zona.nivel):
+                    crecer += 1
+                if otra.decrecio:
+                    decrecer += 2
+
+        # El enunciado penaliza desde la 11a zona industrial cercana.
+        decrecer += 2 * max(0, industriales_cercanas - 10)
+        return crecer, decrecer
+
+    def votos_comercial(self, zona: Zona) -> Tuple[int, int]:
+        crecer = 0
+        decrecer = 0
+
+        for fila, col in self.arterias_adyacentes(zona):
+            celda = self.grid[fila][col]
+            if celda.trafico > 5:
+                crecer += 1
+            if celda.trafico < celda.trafico_anterior:
+                decrecer += 2
+
+        for otra in self.zonas_cercanas(zona):
+            if otra.tipo == RESIDENCIAL:
+                crecer += 1
+                if otra.decrecio:
+                    decrecer += 2
+            elif otra.tipo == INDUSTRIAL:
+                if otra.nivel > math.sqrt(zona.nivel):
+                    crecer += 1
+                if otra.decrecio:
+                    decrecer += 2
+
+        return crecer, decrecer
+
+    def votos_industrial(self, zona: Zona) -> Tuple[int, int]:
+        crecer = len(self.arterias_adyacentes(zona))
+        decrecer = 0
+
+        for otra in self.zonas_cercanas(zona):
+            if otra.tipo == RESIDENCIAL:
+                crecer += 1
+                if otra.decrecio:
+                    decrecer += 2
+            elif otra.tipo == COMERCIAL:
+                if otra.nivel > math.sqrt(zona.nivel):
+                    crecer += 1
+                if otra.decrecio:
+                    decrecer += 2
+            elif otra.tipo == INDUSTRIAL and otra.decrecio:
+                decrecer += 2
+
+        return crecer, decrecer
+
+    def zonas_cercanas(self, zona: Zona) -> List[Zona]:
+        return [
+            otra
+            for otra in self.zonas
+            if otra is not zona and self.distancia_zonas(zona, otra) <= DISTANCIA_ZONAS
+        ]
+
+    def distancia_zonas(self, a: Zona, b: Zona) -> int:
+        """Distancia Chebyshev entre los centros de dos zonas."""
+        centro_a = (a.fila + 1, a.col + 1)
+        centro_b = (b.fila + 1, b.col + 1)
+        return max(abs(centro_a[0] - centro_b[0]), abs(centro_a[1] - centro_b[1]))
+
+    def arterias_adyacentes(self, zona: Zona) -> List[Tuple[int, int]]:
+        """Celdas de arteria inmediatamente adyacentes al perimetro de la zona."""
+        adyacentes = set()
+        for df in range(3):
+            for dc in range(3):
+                fila = zona.fila + df
+                col = zona.col + dc
+                for nf, nc in self.vecinos_ortogonales(fila, col):
+                    dentro_de_zona = zona.fila <= nf <= zona.fila + 2 and zona.col <= nc <= zona.col + 2
+                    if not dentro_de_zona and self.grid[nf][nc].es_arteria:
+                        adyacentes.add((nf, nc))
+        return list(adyacentes)
+
+    def vecinos_ortogonales(self, fila: int, col: int) -> List[Tuple[int, int]]:
+        vecinos = []
+        for df, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nf, nc = fila + df, col + dc
+            if 0 <= nf < FILAS and 0 <= nc < COLUMNAS:
+                vecinos.append((nf, nc))
+        return vecinos
+
+    def coord_desde_argumentos(self, partes: List[str], inicio: int) -> Tuple[str, int]:
+        """Lee una coordenada que puede venir como C4 o separada como C 4."""
+        if inicio >= len(partes):
+            raise ValueError("Falta coordenada")
+
+        actual = partes[inicio]
+        if re.fullmatch(r"[A-Za-z]+\d+", actual):
+            return actual, inicio + 1
+
+        if inicio + 1 < len(partes) and re.fullmatch(r"[A-Za-z]+", partes[inicio]) and re.fullmatch(r"\d+", partes[inicio + 1]):
+            return partes[inicio] + partes[inicio + 1], inicio + 2
+
+        raise ValueError(f"Coordenada invalida: {actual}")
+
+    def procesar_comando(self, comando: str):
+        """Procesa comandos del usuario."""
+        if not comando.strip():
+            self.tick()
+            return None
+
+        partes = comando.strip().split()
+        cmd = partes[0].lower()
+
+        try:
+            if cmd == "salir":
+                return "salir"
+
+            if cmd == "guardar":
+                if len(partes) != 2:
+                    print("Uso: guardar <ruta_archivo>")
+                else:
+                    self.guardar(partes[1])
+
+            elif cmd == "cargar":
+                if len(partes) != 2:
+                    print("Uso: cargar <ruta_archivo>")
+                else:
+                    self.cargar(partes[1])
+
+            elif cmd in TIPOS_ZONA:
+                coord, siguiente = self.coord_desde_argumentos(partes, 1)
+                if siguiente != len(partes):
+                    print(f"Uso: {cmd} <celda>")
+                else:
+                    self.colocar_zona(coord, cmd)
+
+            elif cmd == "a":
+                inicio, siguiente = self.coord_desde_argumentos(partes, 1)
+                if siguiente >= len(partes):
+                    print("Uso: a <celda_inicio> <fin>")
+                else:
+                    fin = "".join(partes[siguiente:])
+                    self.colocar_arteria(inicio, fin)
+
+            else:
+                print(f"Comando desconocido: {cmd}")
+
+        except ValueError as error:
+            print(f"Error: {error}")
+
+        self.imprimir_grid()
+        return None
+
+
 def main():
-    """Función principal del juego"""
     juego = SimCity()
-    
+
     print("=" * 80)
     print("BIENVENIDO A SIMCITY 2526")
     print("=" * 80)
-    print("\nComandos:")
-    print("  r <celda>        - Crear zona residencial")
-    print("  c <celda>        - Crear zona comercial")
-    print("  i <celda>        - Crear zona industrial")
-    print("  a <inicio> <fin> - Crear arteria vial")
-    print("  guardar <archivo> - Guardar ciudad")
-    print("  cargar <archivo> - Cargar ciudad")
-    print("  salir            - Salir del juego")
-    print("  [Enter]          - Avanzar un tick de reloj")
-    print("\nEjemplos:")
-    print("  r C4             - Crea zona residencial en C4")
-    print("  a C7 P7          - Crea arteria horizontal de C7 a P7")
-    print("  a F4 F9          - Crea arteria vertical de F4 a F9")
+    print("Comandos:")
+    print("  r <celda>          Crear zona residencial, ej. r C4")
+    print("  c <celda>          Crear zona comercial, ej. c T2")
+    print("  i <celda>          Crear zona industrial, ej. i J13")
+    print("  a <inicio> <fin>   Crear arteria, ej. a C7 P o a F4 9")
+    print("  guardar <archivo>  Guardar ciudad")
+    print("  cargar <archivo>   Cargar ciudad")
+    print("  salir              Salir")
+    print("  [Enter]            Avanzar un tick")
     print()
-    
+
     juego.imprimir_grid()
-    
+
     while True:
         try:
-            comando = input("\n> ").strip()
-            if not juego.es_comando_valido(comando):
-                print("Comando inválido. Intente de nuevo.")
-                continue
-            
+            comando = input("\n> ")
             resultado = juego.procesar_comando(comando)
-            if resultado == 'salir':
-                print("¡Gracias por jugar SimCity 2526!")
+            if resultado == "salir":
+                print("Gracias por jugar SimCity 2526.")
                 break
         except KeyboardInterrupt:
-            print("\n¡Gracias por jugar SimCity 2526!")
+            print("\nGracias por jugar SimCity 2526.")
             break
-        except Exception as e:
-            print(f"Error: {e}")
+
 
 if __name__ == "__main__":
     main()
