@@ -1,16 +1,252 @@
-,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,AA,AB,AC
-1,
-2,
-3,
-4,
-5,
-6,
-7,
-8,
-9,
-10,
-11,
-12,
-13,
-14,
-15,
+{
+  "filas": 16,
+  "columnas": 29,
+  "tick_actual": 5,
+  "zonas": [
+    {
+      "fila": 3,
+      "col": 3,
+      "tipo": "r",
+      "nivel": 6,
+      "decrecio": false
+    },
+    {
+      "fila": 3,
+      "col": 7,
+      "tipo": "c",
+      "nivel": 6,
+      "decrecio": false
+    },
+    {
+      "fila": 3,
+      "col": 11,
+      "tipo": "c",
+      "nivel": 6,
+      "decrecio": false
+    },
+    {
+      "fila": 3,
+      "col": 15,
+      "tipo": "i",
+      "nivel": 6,
+      "decrecio": false
+    },
+    {
+      "fila": 7,
+      "col": 15,
+      "tipo": "i",
+      "nivel": 6,
+      "decrecio": false
+    }
+  ],
+  "arterias": [
+    {
+      "fila": 3,
+      "col": 6,
+      "horizontal": false,
+      "vertical": true,
+      "trafico": 4,
+      "trafico_anterior": 4
+    },
+    {
+      "fila": 4,
+      "col": 6,
+      "horizontal": false,
+      "vertical": true,
+      "trafico": 4,
+      "trafico_anterior": 4
+    },
+    {
+      "fila": 5,
+      "col": 6,
+      "horizontal": false,
+      "vertical": true,
+      "trafico": 4,
+      "trafico_anterior": 4
+    },
+    {
+      "fila": 6,
+      "col": 3,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 4,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 5,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 6,
+      "horizontal": true,
+      "vertical": true,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 6,
+      "col": 7,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 8,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 9,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 10,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 6,
+      "col": 11,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 12,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 13,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 2,
+      "trafico_anterior": 2
+    },
+    {
+      "fila": 6,
+      "col": 14,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 6,
+      "col": 15,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 4,
+      "trafico_anterior": 4
+    },
+    {
+      "fila": 6,
+      "col": 16,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 4,
+      "trafico_anterior": 4
+    },
+    {
+      "fila": 6,
+      "col": 17,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 4,
+      "trafico_anterior": 4
+    },
+    {
+      "fila": 6,
+      "col": 18,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 6,
+      "col": 19,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 6,
+      "col": 20,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 6,
+      "col": 21,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 6,
+      "col": 22,
+      "horizontal": true,
+      "vertical": false,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 7,
+      "col": 6,
+      "horizontal": false,
+      "vertical": true,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 8,
+      "col": 6,
+      "horizontal": false,
+      "vertical": true,
+      "trafico": 0,
+      "trafico_anterior": 0
+    },
+    {
+      "fila": 9,
+      "col": 6,
+      "horizontal": false,
+      "vertical": true,
+      "trafico": 0,
+      "trafico_anterior": 0
+    }
+  ]
+}
